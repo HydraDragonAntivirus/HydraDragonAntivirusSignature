@@ -26,10 +26,12 @@ def extract_infos(file_path, rank=None):
         return {'file_name': file_name, 'md5': file_md5}
 
 def extract_numeric_features(file_path, rank=None, is_malicious=False):
-    """Extract numeric features of a file using pefile"""
+    """Extract numeric features of a file using pefile with extended PE attributes"""
     res = {}
     try:
         pe = pefile.PE(file_path)
+
+        # Extract Optional Header features
         res['SizeOfOptionalHeader'] = pe.FILE_HEADER.SizeOfOptionalHeader
         res['MajorLinkerVersion'] = pe.OPTIONAL_HEADER.MajorLinkerVersion
         res['MinorLinkerVersion'] = pe.OPTIONAL_HEADER.MinorLinkerVersion
@@ -59,12 +61,60 @@ def extract_numeric_features(file_path, rank=None, is_malicious=False):
         res['SizeOfHeapCommit'] = pe.OPTIONAL_HEADER.SizeOfHeapCommit
         res['LoaderFlags'] = pe.OPTIONAL_HEADER.LoaderFlags
         res['NumberOfRvaAndSizes'] = pe.OPTIONAL_HEADER.NumberOfRvaAndSizes
+
+        # Extract Section Headers
+        res['sections'] = []
+        for section in pe.sections:
+            section_info = {
+                'name': section.Name.decode().strip('\x00'),
+                'virtual_size': section.Misc_VirtualSize,
+                'virtual_address': section.VirtualAddress,
+                'size_of_raw_data': section.SizeOfRawData,
+                'pointer_to_raw_data': section.PointerToRawData,
+                'characteristics': section.Characteristics
+            }
+            res['sections'].append(section_info)
+
+        # Extract Imported Functions
+        res['imports'] = []
+        if hasattr(pe, 'DIRECTORY_ENTRY_IMPORT'):
+            for entry in pe.DIRECTORY_ENTRY_IMPORT:
+                for imp in entry.imports:
+                    res['imports'].append(imp.name.decode() if imp.name else "Unknown")
+
+        # Extract Exported Functions
+        res['exports'] = []
+        if hasattr(pe, 'DIRECTORY_ENTRY_EXPORT'):
+            for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                res['exports'].append(exp.name.decode() if exp.name else "Unknown")
+
+        # Extract Resources (Strings, Icons, etc.)
+        res['resources'] = []
+        if hasattr(pe, 'DIRECTORY_ENTRY_RESOURCE'):
+            for resource_type in pe.DIRECTORY_ENTRY_RESOURCE.entries:
+                for resource_id in resource_type.directory.entries:
+                    if hasattr(resource_id, 'data'):
+                        resource_data = resource_id.data.struct
+                        res['resources'].append(resource_data)
+
+        # Extract Relocations
+        res['relocations'] = []
+        if hasattr(pe, 'DIRECTORY_ENTRY_BASERELOC'):
+            for relocation in pe.DIRECTORY_ENTRY_BASERELOC.entries:
+                res['relocations'].append(relocation)
+
+        # Extract Debug Information
+        res['debug'] = None
+        if hasattr(pe, 'DIRECTORY_ENTRY_DEBUG'):
+            res['debug'] = pe.DIRECTORY_ENTRY_DEBUG.struct
+
         if rank is not None:
             res['numeric_tag'] = rank
+
     except Exception as e:
         print(f"An error occurred while processing {file_path}: {e}")
         move_to_problematic(file_path, is_malicious)
-        
+    
     return res
 
 def move_to_problematic(file_path, is_malicious):
