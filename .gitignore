@@ -1,3 +1,7 @@
+#JSON pkl output
+benign_numeric.pkl
+malicious_file_names.json
+malicious_numeric.pkl
 #Signature Output
 malicious_signatures.txt
 benign_signatures.txt

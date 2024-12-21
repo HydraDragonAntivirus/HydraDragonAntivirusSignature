@@ -66,7 +66,7 @@ def extract_numeric_features(file_path, rank=None, is_malicious=False):
         res['sections'] = []
         for section in pe.sections:
             section_info = {
-                'name': section.Name.decode().strip('\x00'),
+                'name': section.Name.decode(errors='ignore').strip('\x00'),
                 'virtual_size': section.Misc_VirtualSize,
                 'virtual_address': section.VirtualAddress,
                 'size_of_raw_data': section.SizeOfRawData,
@@ -97,16 +97,21 @@ def extract_numeric_features(file_path, rank=None, is_malicious=False):
                         resource_data = resource_id.data.struct
                         res['resources'].append(resource_data)
 
-        # Extract Relocations
+        # Extract Relocations (Handle the 'list' case for DIRECTORY_ENTRY_BASERELOC)
         res['relocations'] = []
-        if hasattr(pe, 'DIRECTORY_ENTRY_BASERELOC'):
-            for relocation in pe.DIRECTORY_ENTRY_BASERELOC.entries:
-                res['relocations'].append(relocation)
+        if hasattr(pe, 'DIRECTORY_ENTRY_BASERELOC') and isinstance(pe.DIRECTORY_ENTRY_BASERELOC, list):
+            for relocation in pe.DIRECTORY_ENTRY_BASERELOC:
+                # Check if 'entries' exists and is iterable
+                if hasattr(relocation, 'entries'):
+                    for entry in relocation.entries:
+                        res['relocations'].append(entry)
 
         # Extract Debug Information
-        res['debug'] = None
+        res['debug'] = []
         if hasattr(pe, 'DIRECTORY_ENTRY_DEBUG'):
-            res['debug'] = pe.DIRECTORY_ENTRY_DEBUG.struct
+            if isinstance(pe.DIRECTORY_ENTRY_DEBUG, list):
+                for debug_entry in pe.DIRECTORY_ENTRY_DEBUG:
+                    res['debug'].append(debug_entry.struct if hasattr(debug_entry, 'struct') else "No Debug Struct")
 
         if rank is not None:
             res['numeric_tag'] = rank
@@ -208,13 +213,6 @@ def main():
     # Save numeric features for benign files as pickle file
     with open('benign_numeric.pkl', 'wb') as f:
         joblib.dump(benign_numeric_features, f)
-        
-    # Save MD5 hashes for malicious and benign files in JSON
-    with open('malicious_md5_list.json', 'w') as f:
-        json.dump(malicious_md5_list, f)
-        
-    with open('benign_md5_list.json', 'w') as f:
-        json.dump(benign_md5_list, f)
 
     print("Files information saved in JSON. Numeric features and MD5 hashes saved separately for malicious and benign files.")
 
