@@ -1,3 +1,6 @@
+#Signature Output
+malicious_signatures.txt
+benign_signatures.txt
 #Log
 console_log.txt
 stdin_log.txt
