@@ -2,6 +2,7 @@ import os
 import subprocess
 import logging
 import nltk
+import re
 from concurrent.futures import ThreadPoolExecutor
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -72,66 +73,74 @@ def decompile_file(file_path, project_name='temporary'):
     except Exception as e:
         logging.error(f"An error occurred during decompilation: {e}")
 
-# Function to extract meaningful words from a decompiled file
-def extract_meaningful_words(file_path):
+# Function to extract meaningful words or patterns (e.g., function names, string literals) from a decompiled file
+def extract_code_patterns(file_path):
     try:
         # Load the decompiled output file with UTF-8 encoding
         with open(file_path, 'r', encoding='utf-8', errors='replace') as file:
             code = file.read()
 
-        # Tokenize the code into words
-        words = nltk.word_tokenize(code)
+        # Extract function names using regex (this is a simple example, refine it based on actual Ghidra output)
+        function_names = re.findall(r'\b\w+\b', code)
+        
+        # Extract string literals or suspicious patterns (example)
+        string_literals = re.findall(r'"([^"]*)"', code)
 
-        # Filter out non-alphanumeric words
-        meaningful_words = [word for word in words if word.isalpha()]
-
-        return meaningful_words
+        return function_names + string_literals
     except Exception as e:
-        logging.error(f"Error extracting words from {file_path}: {e}")
+        logging.error(f"Error extracting patterns from {file_path}: {e}")
         return []
 
-# Function to calculate cosine similarity between two sets of words
-def calculate_similarity(set1, set2):
-    vectorizer = CountVectorizer().fit_transform([' '.join(set1), ' '.join(set2)])
-    similarity_matrix = cosine_similarity(vectorizer)
-    return similarity_matrix[0][1]  # Similarity between the two sets
+# Function to identify frequent patterns in a list of files
+def find_frequent_patterns(files, threshold=3):
+    pattern_count = {}
+    
+    for file_path in files:
+        patterns = extract_code_patterns(file_path)
+        for pattern in patterns:
+            pattern_count[pattern] = pattern_count.get(pattern, 0) + 1
 
-# Function to compare data (malicious and benign) and calculate their similarity
-def compare_data(malicious_data, benign_data):
-    malicious_words = extract_meaningful_words(malicious_data)
-    benign_words = extract_meaningful_words(benign_data)
+    # Filter patterns that occur more than the threshold
+    frequent_patterns = {k: v for k, v in pattern_count.items() if v > threshold}
+    return frequent_patterns
 
-    # Calculate the similarity between malicious and benign data
-    similarity = calculate_similarity(malicious_words, benign_words)
-    return similarity
-
-# Function to extract and process the benign and malicious data
+# Function to extract and process benign and malicious data
 def process_benign_and_malicious_data():
     # Process benign data (data2)
     benign_data_files = [os.path.join(data_benign_dir, f) for f in os.listdir(data_benign_dir) if os.path.isfile(os.path.join(data_benign_dir, f))]
     malicious_data_files = [os.path.join(data_malicious_dir, f) for f in os.listdir(data_malicious_dir) if os.path.isfile(os.path.join(data_malicious_dir, f))]
 
-    benign_words = []
-    malicious_words = []
+    benign_patterns = []
+    malicious_patterns = []
 
-    # Decompile and extract words from the benign data
+    # Decompile and extract patterns from the benign data
     for file_path in benign_data_files:
         logging.info(f"Processing benign file: {file_path}")
         decompile_file(file_path)
-        extracted_words = extract_meaningful_words(file_path)
-        benign_words.extend(extracted_words)
+        extracted_patterns = extract_code_patterns(file_path)
+        benign_patterns.extend(extracted_patterns)
 
-    # Decompile and extract words from the malicious data
+    # Decompile and extract patterns from the malicious data
     for file_path in malicious_data_files:
         logging.info(f"Processing malicious file: {file_path}")
         decompile_file(file_path)
-        extracted_words = extract_meaningful_words(file_path)
-        malicious_words.extend(extracted_words)
+        extracted_patterns = extract_code_patterns(file_path)
+        malicious_patterns.extend(extracted_patterns)
 
-    return benign_words, malicious_words
+    return benign_patterns, malicious_patterns
+
+# Function to save the generic signatures to a file
+def save_signatures(signatures, output_file):
+    try:
+        with open(output_file, 'w', encoding='utf-8') as file:
+            for signature in signatures:
+                file.write(f"{signature}\n")
+        logging.info(f"Signatures saved to {output_file}")
+    except Exception as e:
+        logging.error(f"Error saving signatures: {e}")
 
 # Function to analyze unknown files after processing benign and malicious data
-def analyze_unknown_files(benign_words, malicious_words):
+def analyze_unknown_files(benign_patterns, malicious_patterns):
     try:
         files_to_analyze = [os.path.join(test_dir, f) for f in os.listdir(test_dir) if os.path.isfile(os.path.join(test_dir, f))]
         
@@ -150,33 +159,17 @@ def analyze_unknown_files(benign_words, malicious_words):
                 except Exception as e:
                     logging.error(f"Error processing file {futures[future]}: {e}")
 
-            # Calculate baseline similarity between benign and malicious data
-            baseline_similarity = calculate_similarity(malicious_words, benign_words)
-            logging.info(f"Baseline similarity between malicious and benign data: {baseline_similarity}")
-
-            # Define similarity thresholds
-            malicious_threshold = 0.86
-            benign_threshold = 0.9
-
-            # Analyze test files without blocking
+            # Analyze test files
             for file_path in files_to_analyze:
                 logging.info(f"Analyzing unknown file: {file_path}")
-                unknown_data = extract_meaningful_words(file_path)
+                unknown_data = extract_code_patterns(file_path)
 
-                # Compare with baseline (malicious and benign data)
-                malicious_similarity = calculate_similarity(unknown_data, malicious_words)
-                benign_similarity = calculate_similarity(unknown_data, benign_words)
+                # Compare with malicious patterns
+                for pattern in malicious_patterns:
+                    if pattern in unknown_data:
+                        logging.info(f"{file_path} contains suspicious pattern: {pattern}")
+                        break
 
-                logging.info(f"Similarity with malicious data: {malicious_similarity}")
-                logging.info(f"Similarity with benign data: {benign_similarity}")
-
-                # Classification based on thresholds
-                if malicious_similarity >= malicious_threshold:
-                    logging.info(f"{file_path} is classified as Malicious.")
-                elif benign_similarity >= benign_threshold:
-                    logging.info(f"{file_path} is classified as Benign.")
-                else:
-                    logging.info(f"{file_path} is Uncertain.")
     except Exception as e:
         logging.error(f"Error analyzing unknown files: {e}")
 
@@ -186,11 +179,21 @@ def main():
 
     # Step 1: Process benign and malicious data
     logging.info("Processing benign and malicious data...")
-    benign_words, malicious_words = process_benign_and_malicious_data()
+    benign_patterns, malicious_patterns = process_benign_and_malicious_data()
 
-    # Step 2: Analyze unknown files
-    logging.info("Analyzing unknown files in the test folder...")
-    analyze_unknown_files(benign_words, malicious_words)
+    # Step 2: Identify frequent malicious patterns
+    logging.info("Identifying frequent malicious patterns...")
+    malicious_signatures = find_frequent_patterns([os.path.join(data_malicious_dir, f) for f in os.listdir(data_malicious_dir)])
+    benign_signatures = find_frequent_patterns([os.path.join(data_benign_dir, f) for f in os.listdir(data_benign_dir)])
+
+    # Step 3: Save generic signatures
+    logging.info("Saving generic signatures...")
+    save_signatures(malicious_signatures, 'malicious_signatures.txt')
+    save_signatures(benign_signatures, 'benign_signatures.txt')
+
+    # Step 4: Analyze unknown files
+    logging.info("Analyzing unknown files...")
+    analyze_unknown_files(benign_signatures, malicious_signatures)
 
     end_time = time.time()
     logging.info(f"Analysis completed in {end_time - start_time:.2f} seconds.")
