@@ -135,17 +135,20 @@ def analyze_unknown_files(benign_words, malicious_words):
     try:
         files_to_analyze = [os.path.join(test_dir, f) for f in os.listdir(test_dir) if os.path.isfile(os.path.join(test_dir, f))]
         
-        # Create a ThreadPoolExecutor to run tasks in parallel
-        with ThreadPoolExecutor(max_workers=20) as executor:  # Up to 20 files at once
-            futures = []
+        # Create a ThreadPoolExecutor with as many workers as there are CPU cores
+        max_workers = os.cpu_count() or 20  # Use the number of CPU cores or default to 20
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            logging.info(f"Using up to {max_workers} threads for analysis.")
+            
+            # Submit all decompilation tasks simultaneously
+            futures = {executor.submit(decompile_file, file_path): file_path for file_path in files_to_analyze}
 
-            # Submit decompilation tasks for each file in the test folder
-            for file_path in files_to_analyze:
-                futures.append(executor.submit(decompile_file, file_path))
-
-            # Wait for all futures to complete
+            # Continuously process completed futures
             for future in futures:
-                future.result()
+                try:
+                    future.result()  # Retrieve the result or raise any exception that occurred
+                except Exception as e:
+                    logging.error(f"Error processing file {futures[future]}: {e}")
 
             # Calculate baseline similarity between benign and malicious data
             baseline_similarity = calculate_similarity(malicious_words, benign_words)
@@ -155,7 +158,7 @@ def analyze_unknown_files(benign_words, malicious_words):
             malicious_threshold = 0.86
             benign_threshold = 0.9
 
-            # Analyze test files
+            # Analyze test files without blocking
             for file_path in files_to_analyze:
                 logging.info(f"Analyzing unknown file: {file_path}")
                 unknown_data = extract_meaningful_words(file_path)
